@@ -63,13 +63,6 @@ class Redditor(MessageableMixin, RedditorListingMixin, RedditBase):
 
     STR_FIELD = "name"
 
-    @classmethod
-    def from_data(cls, reddit, data):
-        """Return an instance of Redditor, or None from ``data``."""
-        if data == "[deleted]":
-            return None
-        return cls(reddit, data)
-
     @property
     def stream(self):
         """Provide an instance of :class:`.RedditorStream`.
@@ -105,19 +98,23 @@ class Redditor(MessageableMixin, RedditorListingMixin, RedditBase):
         """
         if bool(name) == bool(_data):
             raise TypeError("Either `name` or `_data` must be provided.")
+
         if _data:
             assert (
                 isinstance(_data, dict) and "name" in _data
             ), "Please file a bug with PRAW"
+
+        if _data is None:
+            _data = {"name": name}
+
         super(Redditor, self).__init__(reddit, _data=_data)
+
         self._listing_use_sort = True
-        if name:
-            self.name = name
-        self._path = API_PATH["user"].format(user=self)
+        self._path = API_PATH["user"].format(user=self.name)
         self._stream = None
 
     def _info_path(self):
-        return API_PATH["user_about"].format(user=self)
+        return API_PATH["user_about"].format(user=self.name)
 
     def _friend(self, method, data):
         url = API_PATH["friend_v1"].format(user=self)

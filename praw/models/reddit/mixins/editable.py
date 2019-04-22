@@ -40,14 +40,5 @@ class EditableMixin(object):
         """
         data = {"text": body, "thing_id": self.fullname}
         updated = self._reddit.post(API_PATH["edit"], data=data)[0]
-        for attribute in [
-            "_fetched",
-            "_reddit",
-            "_submission",
-            "replies",
-            "subreddit",
-        ]:
-            if attribute in updated.__dict__:
-                delattr(updated, attribute)
-        self.__dict__.update(updated.__dict__)
+        self._data.update(updated._data)
         return self

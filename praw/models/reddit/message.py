@@ -1,9 +1,15 @@
 """Provide the Message class."""
+import sys
 from ...const import API_PATH
 from .base import RedditBase
 from .mixins import InboxableMixin, ReplyableMixin
 from .redditor import Redditor
 from .subreddit import Subreddit
+
+
+string_types = (str,)
+if sys.version_info.major <= 2:
+    string_types = (basestring,)
 
 
 class Message(InboxableMixin, ReplyableMixin, RedditBase):
@@ -40,41 +46,65 @@ class Message(InboxableMixin, ReplyableMixin, RedditBase):
     """
 
     STR_FIELD = "id"
+    OBJECTIFIABLE = {"author", "dest", "replies", "subreddit"}
 
     @classmethod
-    def parse(cls, data, reddit):
-        """Return an instance of Message or SubredditMessage from ``data``.
-
-        :param data: The structured data.
-        :param reddit: An instance of :class:`.Reddit`.
-
-        """
-        if data["author"]:
-            data["author"] = Redditor(reddit, data["author"])
-
-        if data["dest"].startswith("#"):
-            data["dest"] = Subreddit(reddit, data["dest"][1:])
-        else:
-            data["dest"] = Redditor(reddit, data["dest"])
-
-        if data["replies"]:
-            replies = data["replies"]
-            data["replies"] = reddit._objector.objectify(
-                replies["data"]["children"]
+    def _objectify(cls, reddit, data):
+        key = "author"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = (
+                None
+                if item in ("[deleted]", "[removed]")
+                else Redditor(reddit, name=item)
             )
+
+        key = "dest"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            if item.startswith("#"):
+                data[key] = Subreddit(reddit, item[1:])
+            else:
+                data[key] = Redditor(reddit, item)
+
+        key = "replies"
+        item = data.get(key)
+        if isinstance(item, (string_types, dict)):
+            if item == "":
+                data[key] = []
+            else:
+                data[key] = reddit._objector.objectify(
+                    item["data"]["children"]
+                )
+
+        key = "subreddit"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = Subreddit(reddit, display_name=item)
+
+    def __new__(cls, reddit, _data):
+        """Create a new instance."""
+        if _data.get("subreddit") is None:
+            return super(Message, cls).__new__(cls)
         else:
-            data["replies"] = []
+            return super(Message, cls).__new__(SubredditMessage)
 
-        if data["subreddit"]:
-            data["subreddit"] = Subreddit(reddit, data["subreddit"])
-            return SubredditMessage(reddit, _data=data)
-
-        return cls(reddit, _data=data)
+    def __getnewargs__(self):
+        return (self._reddit, self._data)
 
     def __init__(self, reddit, _data):
         """Construct an instance of the Message object."""
         super(Message, self).__init__(reddit, _data=_data)
         self._fetched = True
+
+    def _init_attributes(self, attrs):
+        super(Message, self)._init_attributes(attrs)
+
+        objectified, rdata = attrs[-1], attrs[0]
+        objectified.update(
+            {key: rdata[key] for key in self.OBJECTIFIABLE if key in rdata}
+        )
+        self._objectify(self._reddit, objectified)
 
     def delete(self):
         """Delete the message.

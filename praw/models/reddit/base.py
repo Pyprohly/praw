@@ -1,13 +1,17 @@
 """Provide the RedditBase class."""
 
-from sys import version_info
+from collections import defaultdict
+from operator import attrgetter
+import sys
 
 from ...const import API_PATH, urlparse
 from ...exceptions import ClientException, PRAWException
+from ...util.collections import AttributeContainer, ChainMap
 from ..base import PRAWBase
 
-if version_info.major > 2:
-    basestring = str  # pylint: disable=invalid-name
+string_types = (str,)
+if sys.version_info.major <= 2:
+    string_types = (basestring,)
 
 
 class RedditBase(PRAWBase):
@@ -28,27 +32,35 @@ class RedditBase(PRAWBase):
         underscore and the object's base36 ID, e.g., ``t1_c5s96e0``.
 
         """
-        return "{}_{}".format(
-            self._reddit._objector.kind(self), self.id
-        )  # pylint: disable=invalid-name
+        return "{}_{}".format(self._reddit._objector.kind(self), self.id)
+
+    a = property(
+        attrgetter("_attributes"),
+        doc="Provide an object to access the data fetched from reddit.",
+    )
 
     def __eq__(self, other):
         """Return whether the other instance equals the current."""
-        if isinstance(other, basestring):  # basestring needed for py2 support
+        if isinstance(other, string_types):
             return other.lower() == str(self).lower()
         return (
             isinstance(other, self.__class__)
             and str(self).lower() == str(other).lower()
         )
 
-    def __getattr__(self, attribute):
-        """Return the value of `attribute`."""
-        if not attribute.startswith("_") and not self._fetched:
-            self._fetch()
-            return getattr(self, attribute)
+    def __getattr__(self, name):
+        """Return the value of attribute `name`."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        try:
+            return self._attributes[name]
+        except KeyError:
+            pass
+
         raise AttributeError(
             "{!r} object has no attribute {!r}".format(
-                self.__class__.__name__, attribute
+                self.__class__.__name__, name
             )
         )
 
@@ -66,6 +78,13 @@ class RedditBase(PRAWBase):
         self._fetched = False
         self._info_params = {}
 
+        attrs = self._attrs = defaultdict(dict)
+        mapping = attrs[0] = self._data
+        self._init_attributes(attrs)
+        if len(attrs) > 1:
+            mapping = ChainMap(*[attrs[k] for k in sorted(attrs)])
+        self._attributes = AttributeContainer(mapping, self._maybe_fetch)
+
     def __repr__(self):
         """Return an object initialization representation of the instance."""
         return "{}({}={!r})".format(
@@ -78,10 +97,10 @@ class RedditBase(PRAWBase):
 
     def __ne__(self, other):
         """Return whether the other instance differs from the current."""
-        return not self == other
+        return not (self == other)
 
     def _fetch(self):
-        if "_info_path" in dir(self):
+        if hasattr(self, "_info_path"):
             other = self._reddit.get(
                 self._info_path(), params=self._info_params
             )
@@ -89,7 +108,7 @@ class RedditBase(PRAWBase):
             self._info_params["id"] = self.fullname
             children = self._reddit.get(
                 API_PATH["info"], params=self._info_params
-            ).children
+            )._data["children"]
             if not children:
                 raise PRAWException(
                     "No {!r} data returned for thing {}".format(
@@ -97,11 +116,23 @@ class RedditBase(PRAWBase):
                     )
                 )
             other = children[0]
-        self.__dict__.update(other.__dict__)
+        self._update_attributes(other._attrs)
         self._fetched = True
 
-    def _reset_attributes(self, *attributes):
-        for attribute in attributes:
-            if attribute in self.__dict__:
-                del self.__dict__[attribute]
-        self._fetched = False
+    def _init_attributes(self, attrs):
+        pass
+
+    def _reset_attributes(self, attrs):
+        for attr in attrs:
+            for attr_layer in self._attrs.values():
+                attr_layer.pop(attr, None)
+
+    def _update_attributes(self, attrs):
+        self_attrs = self._attrs
+        for key, value in attrs.items():
+            self_attrs[key].update(value)
+
+    def _maybe_fetch(self, name):
+        if not (self._fetched or name.startswith("_")):
+            self._fetch()
+            return True

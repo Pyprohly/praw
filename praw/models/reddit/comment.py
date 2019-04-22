@@ -1,9 +1,18 @@
 """Provide the Comment class."""
+
+import sys
+
 from ...exceptions import ClientException
 from ..comment_forest import CommentForest
 from .base import RedditBase
 from .mixins import InboxableMixin, ThingModerationMixin, UserContentMixin
 from .redditor import Redditor
+from .subreddit import Subreddit
+
+
+string_types = (str,)
+if sys.version_info.major <= 2:
+    string_types = (basestring,)
 
 
 class Comment(InboxableMixin, UserContentMixin, RedditBase):
@@ -53,6 +62,7 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
         "This comment does not appear to be in the comment tree"
     )
     STR_FIELD = "id"
+    OBJECTIFIABLE = {"author", "replies", "subreddit"}
 
     @staticmethod
     def id_from_url(url):
@@ -66,6 +76,32 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
         if len(parts) - 4 != comment_index:
             raise ClientException("Invalid URL: {}".format(url))
         return parts[-1]
+
+    @classmethod
+    def _objectify(cls, reddit, data):
+        key = "author"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = (
+                None
+                if item in ("[deleted]", "[removed]")
+                else Redditor(reddit, name=item)
+            )
+
+        key = "replies"
+        item = data.get(key)
+        if isinstance(item, (string_types, dict)):
+            if item == "":
+                data[key] = []
+            else:
+                data[key] = reddit._objector.objectify(
+                    item["data"]["children"]
+                )
+
+        key = "subreddit"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = Subreddit(reddit, display_name=item)
 
     @property
     def is_root(self):
@@ -116,8 +152,7 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
         """Update the Submission associated with the Comment."""
         submission._comments_by_id[self.name] = self
         self._submission = submission
-        # pylint: disable=not-an-iterable
-        for reply in getattr(self, "replies", []):
+        for reply in self.replies:
             reply.submission = submission
 
     def __init__(
@@ -132,31 +167,37 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
             raise TypeError(
                 "Exactly one of `id`, `url`, or `_data` must be provided."
             )
-        self._mod = self._replies = self._submission = None
+
+        self._mod = None
+        self._replies = None
+        self._submission = None
+
+        init_by_data = True
+        if _data is None:
+            init_by_data = False
+            _data = {"id": id or self.id_from_url(url)}
+
         super(Comment, self).__init__(reddit, _data=_data)
-        if id:
-            self.id = id  # pylint: disable=invalid-name
-        elif url:
-            self.id = self.id_from_url(url)
-        else:
+
+        if init_by_data:
             self._fetched = True
 
-    def __setattr__(self, attribute, value):
-        """Objectify author, replies, and subreddit."""
-        if attribute == "author":
-            value = Redditor.from_data(self._reddit, value)
-        elif attribute == "replies":
-            if value == "":
-                value = []
-            else:
-                value = self._reddit._objector.objectify(value).children
-            attribute = "_replies"
-        elif attribute == "subreddit":
-            value = self._reddit.subreddit(value)
-        super(Comment, self).__setattr__(attribute, value)
+        self.reply_limit = None
+        self.reply_sort = None
+
+    def _init_attributes(self, attrs):
+        super(Comment, self)._init_attributes(attrs)
+
+        objectified, rdata = attrs[-1], attrs[0]
+        objectified.update(
+            {key: rdata[key] for key in self.OBJECTIFIABLE if key in rdata}
+        )
+        self._objectify(self._reddit, objectified)
+
+        self._replies = objectified.pop("replies", None)
 
     def _extract_submission_id(self):
-        if "context" in self.__dict__:
+        if "context" in self._data:
             return self.context.rsplit("/", 4)[1]
         return self.link_id.split("_", 1)[1]
 
@@ -238,19 +279,18 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
            comment.refresh()
 
         """
-        if "context" in self.__dict__:  # Using hasattr triggers a fetch
+        if "context" in self._data:
             comment_path = self.context.split("?", 1)[0]
         else:
             comment_path = "{}_/{}".format(
-                self.submission._info_path(),  # pylint: disable=no-member
-                self.id,
+                self.submission._info_path(), self.id
             )
 
         # The context limit appears to be 8, but let's ask for more anyway.
         params = {"context": 100}
-        if "reply_limit" in self.__dict__:
+        if self.reply_limit:
             params["limit"] = self.reply_limit
-        if "reply_sort" in self.__dict__:
+        if self.reply_sort:
             params["sort"] = self.reply_sort
         comment_list = self._reddit.get(comment_path, params=params)[
             1
@@ -269,9 +309,8 @@ class Comment(InboxableMixin, UserContentMixin, RedditBase):
         if comment.id != self.id:
             raise ClientException(self.MISSING_COMMENT_MESSAGE)
 
-        if self._submission is not None:
-            del comment.__dict__["_submission"]  # Don't replace if set
-        self.__dict__.update(comment.__dict__)
+        self._replies = comment._replies
+        self._data.update(comment._data)
 
         for reply in comment_list:
             reply.submission = self.submission

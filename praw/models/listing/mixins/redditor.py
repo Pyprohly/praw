@@ -21,7 +21,7 @@ class RedditorListingMixin(BaseListingMixin, GildedListingMixin):
                print(comment.body.split('\n', 1)[0][:79])
 
         """
-        if self.__dict__.get("_comments") is None:
+        if "_comments" not in self.__dict__:
             self._comments = SubListing(self._reddit, self._path, "comments")
         return self._comments
 
@@ -38,7 +38,7 @@ class RedditorListingMixin(BaseListingMixin, GildedListingMixin):
                print(submission.title)
 
         """
-        if self.__dict__.get("_submissions") is None:
+        if "_submissions" not in self.__dict__:
             self._submissions = SubListing(
                 self._reddit, self._path, "submitted"
             )
@@ -138,7 +138,7 @@ class SubListing(BaseListingMixin):
         :param subpath: The additional path to this sublisting.
 
         """
-        super(SubListing, self).__init__(reddit, None)
+        super(SubListing, self).__init__(reddit, _data=None)
         self._listing_use_sort = True
         self._reddit = reddit
         self._path = urljoin(base_path, subpath)

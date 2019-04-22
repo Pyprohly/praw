@@ -86,28 +86,32 @@ class Multireddit(SubredditListingMixin, RedditBase):
                print(submission)
 
         """
-        if self._stream is None:
+        if "_stream" not in self.__dict__:
             self._stream = SubredditStream(self)
         return self._stream
 
     def __init__(self, reddit, _data):
         """Construct an instance of the Multireddit object."""
-        self.path = None
         super(Multireddit, self).__init__(reddit, _data=_data)
-        self._author = Redditor(reddit, self.path.split("/", 3)[2])
+
+        self._author = Redditor(reddit, self._data["path"].split("/", 3)[2])
         self._path = API_PATH["multireddit"].format(
-            multi=self.name, user=self._author
+            multi=self._data["name"], user=self._author
         )
-        self._stream = None
-        self.path = "/" + self._path[:-1]  # Prevent requests for path
-        if "subreddits" in self.__dict__:
-            self.subreddits = [
-                Subreddit(reddit, x["name"]) for x in self.subreddits
+
+        self._data["path"] = "/" + self._path[:-1]  # Prevent requests for path
+        if "subreddits" in self._data:
+            self._attrs[-1]["subreddits"] = [
+                Subreddit(reddit, s["name"]) for s in self._data["subreddits"]
             ]
+
+    def _init_attributes(self, attrs):
+        super(Multireddit, self)._init_attributes(attrs)
+        attrs[-1]
 
     def _info_path(self):
         return API_PATH["multireddit_api"].format(
-            multi=self.name, user=self._author
+            multi=self._data["name"], user=self._author
         )
 
     def add(self, subreddit):
@@ -117,12 +121,13 @@ class Multireddit(SubredditListingMixin, RedditBase):
 
         """
         url = API_PATH["multireddit_update"].format(
-            multi=self.name, user=self._author, subreddit=subreddit
+            multi=self._data["name"], user=self._author, subreddit=subreddit
         )
         self._reddit.request(
             "PUT", url, data={"model": dumps({"name": str(subreddit)})}
         )
-        self._reset_attributes("subreddits")
+        self._reset_attributes(["subreddits"])
+        self._fetched = False
 
     def copy(self, display_name=None):
         """Copy this multireddit and return the new multireddit.
@@ -137,7 +142,7 @@ class Multireddit(SubredditListingMixin, RedditBase):
             name = self.sluggify(display_name)
         else:
             display_name = self.display_name
-            name = self.name
+            name = self._data["name"]
         data = {
             "display_name": display_name,
             "from": self.path,
@@ -158,12 +163,13 @@ class Multireddit(SubredditListingMixin, RedditBase):
 
         """
         url = API_PATH["multireddit_update"].format(
-            multi=self.name, user=self._author, subreddit=subreddit
+            multi=self._data["name"], user=self._author, subreddit=subreddit
         )
         self._reddit.request(
             "DELETE", url, data={"model": dumps({"name": str(subreddit)})}
         )
-        self._reset_attributes("subreddits")
+        self._reset_attributes(["subreddits"])
+        self._fetched = False
 
     def rename(self, display_name):
         """Rename this multireddit.
@@ -174,7 +180,7 @@ class Multireddit(SubredditListingMixin, RedditBase):
         """
         data = {"from": self.path, "display_name": display_name}
         updated = self._reddit.post(API_PATH["multireddit_rename"], data=data)
-        self.__dict__.update(updated.__dict__)
+        self._data.update(updated._data)
 
     def update(self, **updated_settings):
         """Update this multireddit.
@@ -205,5 +211,5 @@ class Multireddit(SubredditListingMixin, RedditBase):
         response = self._reddit.request(
             "PUT", self._info_path(), data={"model": dumps(updated_settings)}
         )
-        new = Multireddit(self._reddit, response["data"])
-        self.__dict__.update(new.__dict__)
+        new_multi = Multireddit(self._reddit, response["data"])
+        self._update_attributes(new_multi._attrs)

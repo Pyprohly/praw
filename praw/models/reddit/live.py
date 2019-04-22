@@ -1,9 +1,17 @@
 """Provide the LiveThread class."""
+
+import sys
+
 from ...const import API_PATH
 from ..listing.generator import ListingGenerator
 from ..list.redditor import RedditorList
 from .base import RedditBase
 from .redditor import Redditor
+
+
+string_types = (str,)
+if sys.version_info.major <= 2:
+    string_types = (basestring,)
 
 
 class LiveContributorRelationship(object):
@@ -346,9 +354,12 @@ class LiveThread(RedditBase):
         """
         if bool(id) == bool(_data):
             raise TypeError("Either `id` or `_data` must be provided.")
+
+        if _data is None:
+            _data = {"id": id}
+
         super(LiveThread, self).__init__(reddit, _data=_data)
-        if id:
-            self.id = id  # pylint: disable=invalid-name
+
         self._contrib = None
         self._contributor = None
 
@@ -528,7 +539,8 @@ class LiveThreadContribution(object):
         url = API_PATH["live_update_thread"].format(id=self.thread.id)
         # prawcore (0.7.0) Session.request() modifies `data` kwarg
         self.thread._reddit.post(url, data=data.copy())
-        self.thread._reset_attributes(*data.keys())
+        self.thread._reset_attributes(data.keys())
+        self._fetched = False
 
 
 class LiveUpdate(RedditBase):
@@ -557,6 +569,14 @@ class LiveUpdate(RedditBase):
     """
 
     STR_FIELD = "id"
+    OBJECTIFIABLE = {"author"}
+
+    @classmethod
+    def _objectify(cls, reddit, data):
+        key = "author"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = Redditor(reddit, name=item)
 
     @property
     def contrib(self):
@@ -608,9 +628,9 @@ class LiveUpdate(RedditBase):
             super(LiveUpdate, self).__init__(reddit, _data=_data)
             self._fetched = True
         elif thread_id and update_id:
-            super(LiveUpdate, self).__init__(reddit, None)
+            super(LiveUpdate, self).__init__(reddit, _data=None)
             self._thread = LiveThread(self._reddit, thread_id)
-            self.id = update_id  # pylint: disable=invalid-name
+            self._data["id"] = update_id
         else:
             raise TypeError(
                 "Either `thread_id` and `update_id`, or "
@@ -618,18 +638,21 @@ class LiveUpdate(RedditBase):
             )
         self._contrib = None
 
-    def __setattr__(self, attribute, value):
-        """Objectify author."""
-        if attribute == "author":
-            value = Redditor(self._reddit, name=value)
-        super(LiveUpdate, self).__setattr__(attribute, value)
+    def _init_attributes(self, attrs):
+        super(LiveUpdate, self)._init_attributes(attrs)
+
+        objectified, rdata = attrs[-1], attrs[0]
+        objectified.update(
+            {key: rdata[key] for key in self.OBJECTIFIABLE if key in rdata}
+        )
+        self._objectify(self._reddit, objectified)
 
     def _fetch(self):
         url = API_PATH["live_focus"].format(
             thread_id=self.thread.id, update_id=self.id
         )
         other = self._reddit.get(url)[0]
-        self.__dict__.update(other.__dict__)
+        self._update_attributes(other._attrs)
         self._fetched = True
 
 

@@ -430,17 +430,30 @@ class Subreddit(MessageableMixin, SubredditListingMixin, RedditBase):
             raise TypeError(
                 "Either `display_name` or `_data` must be provided."
             )
+
+        if _data is None:
+            _data = {"display_name": display_name}
+
         super(Subreddit, self).__init__(reddit, _data=_data)
-        if display_name:
-            self.display_name = display_name
-        self._banned = self._contributor = self._filters = self._flair = None
-        self._emoji = self._widgets = None
-        self._mod = self._moderator = self._modmail = self._muted = None
-        self._quarantine = self._stream = self._stylesheet = self._wiki = None
-        self._path = API_PATH["subreddit"].format(subreddit=self)
+
+        self._banned = None
+        self._contributor = None
+        self._emoji = None
+        self._filters = None
+        self._flair = None
+        self._mod = None
+        self._moderator = None
+        self._modmail = None
+        self._muted = None
+        self._quarantine = None
+        self._stream = None
+        self._stylesheet = None
+        self._wiki = None
+        self._widgets = None
+        self._path = API_PATH["subreddit"].format(subreddit=self.display_name)
 
     def _info_path(self):
-        return API_PATH["subreddit_about"].format(subreddit=self)
+        return API_PATH["subreddit_about"].format(subreddit=self.display_name)
 
     def _submit_media(self, data, timeout):
         """Submit and return an `image`, `video`, or `videogif`.
@@ -1024,8 +1037,9 @@ class SubredditFlair(object):
         :param subreddit: The subreddit whose flair to work with.
 
         """
-        self._link_templates = self._templates = None
         self.subreddit = subreddit
+        self._link_templates = None
+        self._templates = None
 
     def configure(
         self,

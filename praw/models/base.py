@@ -36,6 +36,25 @@ class PRAWBase(object):
 
         """
         self._reddit = reddit
-        if _data:
-            for attribute, value in _data.items():
-                setattr(self, attribute, value)
+        self._data = {} if _data is None else _data
+
+    def __getattr__(self, name):
+        """Return the value of attribute `name`."""
+        try:
+            return self._data[name]
+        except KeyError:
+            pass
+
+        raise AttributeError(
+            "{!r} object has no attribute {!r}".format(
+                self.__class__.__name__, name
+            )
+        )
+
+    def __getstate__(self):
+        """Extract state to pickle."""
+        return self.__dict__
+
+    def __setstate__(self, state):
+        """Restore from pickled state."""
+        self.__dict__.update(state)

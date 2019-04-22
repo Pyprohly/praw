@@ -1,4 +1,7 @@
 """Provide the Submission class."""
+
+import sys
+
 from ...const import API_PATH, urljoin
 from ...exceptions import ClientException
 from ..comment_forest import CommentForest
@@ -7,6 +10,11 @@ from .base import RedditBase
 from .mixins import ThingModerationMixin, UserContentMixin
 from .redditor import Redditor
 from .subreddit import Subreddit
+
+
+string_types = (str,)
+if sys.version_info.major <= 2:
+    string_types = (basestring,)
 
 
 class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
@@ -64,6 +72,7 @@ class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
     """
 
     STR_FIELD = "id"
+    OBJECTIFIABLE = {"author", "subreddit"}
 
     @staticmethod
     def id_from_url(url):
@@ -93,6 +102,22 @@ class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
             raise ClientException("Invalid URL: {}".format(url))
         return submission_id
 
+    @classmethod
+    def _objectify(cls, reddit, data):
+        key = "author"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = (
+                None
+                if item in ("[deleted]", "[removed]")
+                else Redditor(reddit, name=item)
+            )
+
+        key = "subreddit"
+        item = data.get(key)
+        if isinstance(item, string_types):
+            data[key] = Subreddit(reddit, display_name=item)
+
     @property
     def comments(self):
         """Provide an instance of :class:`.CommentForest`.
@@ -118,7 +143,8 @@ class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
         :class:`.CommentForest`.
 
         """
-        # This assumes _comments is set so that _fetch is called when it's not.
+        if not self._fetched:
+            self._fetch()
         return self._comments
 
     @property
@@ -182,27 +208,28 @@ class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
             raise TypeError(
                 "Exactly one of `id`, `url`, or `_data` must be provided."
             )
+
+        if _data is None:
+            _data = {"id": id or self.id_from_url(url)}
+
         super(Submission, self).__init__(reddit, _data=_data)
-        self.comment_limit = 2048
-
-        #: Specify the sort order for ``comments``
-        self.comment_sort = "best"
-
-        if id is not None:
-            self.id = id  # pylint: disable=invalid-name
-        elif url is not None:
-            self.id = self.id_from_url(url)
-        self._flair = self._mod = None
 
         self._comments_by_id = {}
+        self._comments = None
+        self._flair = None
+        self._mod = None
 
-    def __setattr__(self, attribute, value):
-        """Objectify author, and subreddit attributes."""
-        if attribute == "author":
-            value = Redditor.from_data(self._reddit, value)
-        elif attribute == "subreddit":
-            value = Subreddit(self._reddit, value)
-        super(Submission, self).__setattr__(attribute, value)
+        self.comment_limit = 2048
+        self.comment_sort = "best"
+
+    def _init_attributes(self, attrs):
+        super(Submission, self)._init_attributes(attrs)
+
+        objectified, rdata = attrs[-1], attrs[0]
+        objectified.update(
+            {key: rdata[key] for key in self.OBJECTIFIABLE if key in rdata}
+        )
+        self._objectify(self._reddit, objectified)
 
     def _chunk(self, other_submissions, chunk_size):
         all_submissions = [self.fullname]
@@ -217,12 +244,20 @@ class Submission(SubmissionListingMixin, UserContentMixin, RedditBase):
             self._info_path(),
             params={"limit": self.comment_limit, "sort": self.comment_sort},
         )
-        other = other.children[0]
-        delattr(other, "comment_limit")
-        delattr(other, "comment_sort")
-        other._comments = CommentForest(self)
-        self.__dict__.update(other.__dict__)
-        self.comments._update(comments.children)
+        other = other._data["children"][0]
+        self._comments = CommentForest(self)
+        self._comments_by_id = other._comments_by_id
+        self._comments._update(comments._data["children"])
+
+        attrs = self._attrs
+        for key, value in other._attrs.items():
+            attr_layer = attrs[key]
+            attr_layer.clear()
+            attr_layer.update(value)
+
+        self._flair = other._flair
+        self._info_params = other._info_params
+        self._mod = other._mod
         self._fetched = True
 
     def _info_path(self):

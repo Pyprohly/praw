@@ -217,6 +217,9 @@ class SubredditWidgets(PRAWBase):
     @property
     def items(self):
         """Get this subreddit's widgets as a dict from ID to widget."""
+        if not self._fetched:
+            self._fetch()
+
         if self._items is None:
             self._items = {}
             for item_name, data in self._raw_items.items():
@@ -286,16 +289,12 @@ class SubredditWidgets(PRAWBase):
         """
         self._fetch()
 
-    def __getattr__(self, attr):
-        """Return the value of `attr`."""
-        if not attr.startswith("_") and not self._fetched:
+    def __getattr__(self, name):
+        """Return the value of attribute `name`."""
+        if not (self._fetched or name.startswith("_")):
             self._fetch()
-            return getattr(self, attr)
-        raise AttributeError(
-            "{!r} object has no attribute {!r}".format(
-                self.__class__.__name__, attr
-            )
-        )
+
+        return super(SubredditWidgets, self).__getattr__(name)
 
     def __init__(self, subreddit):
         """Initialize the class.
@@ -303,15 +302,12 @@ class SubredditWidgets(PRAWBase):
         :param subreddit: The :class:`.Subreddit` the widgets belong to.
 
         """
-        # set private variables used with properties to None.
-        self._id_card = self._moderators_widget = self._sidebar = None
-        self._topbar = self._items = self._raw_items = self._mod = None
-
-        self._fetched = False
+        super(SubredditWidgets, self).__init__(subreddit._reddit, _data=None)
         self.subreddit = subreddit
         self.progressive_images = False
-
-        super(SubredditWidgets, self).__init__(subreddit._reddit, {})
+        self._fetched = False
+        self._id_card = self._moderators_widget = self._sidebar = None
+        self._topbar = self._items = self._raw_items = self._mod = None
 
     def __repr__(self):
         """Return an object initialization representation of the object."""
@@ -326,7 +322,7 @@ class SubredditWidgets(PRAWBase):
         )
 
         self._raw_items = data.pop("items")
-        super(SubredditWidgets, self).__init__(self.subreddit._reddit, data)
+        self._data.update(data)
 
         # reset private variables used with properties to None.
         self._id_card = self._moderators_widget = self._sidebar = None
@@ -933,7 +929,7 @@ class Widget(PRAWBase):
            widget belongs to. To remedy this, call
            :meth:`~.SubredditWidgets.refresh`.
         """
-        if self._mod is None:
+        if "_mod" not in self.__dict__:
             self._mod = WidgetModeration(self, self.subreddit, self._reddit)
         return self._mod
 
@@ -943,13 +939,13 @@ class Widget(PRAWBase):
             return self.id.lower() == other.id.lower()
         return str(other).lower() == self.id.lower()
 
-    # pylint: disable=invalid-name
     def __init__(self, reddit, _data):
         """Initialize an instance of the class."""
-        self.subreddit = ""  # in case it isn't in _data
-        self.id = ""  # in case it isn't in _data
         super(Widget, self).__init__(reddit, _data=_data)
-        self._mod = None
+        if "id" not in _data:
+            _data["id"] = ""
+        if "subreddit" not in _data:
+            _data["subreddit"] = ""
 
 
 class ButtonWidget(Widget, BaseList):
@@ -1724,7 +1720,7 @@ class WidgetEncoder(JSONEncoder):
         if isinstance(o, PRAWBase):
             return {
                 key: val
-                for key, val in vars(o).items()
+                for key, val in o._data.items()
                 if not key.startswith("_")
             }
         return JSONEncoder.default(self, o)
@@ -1785,10 +1781,9 @@ class WidgetModeration(object):
         )
         payload = {
             key: value
-            for key, value in vars(self.widget).items()
+            for key, value in self.widget._data.items()
             if not key.startswith("_")
         }
-        del payload["subreddit"]  # not JSON serializable
         payload.update(kwargs)
         widget = self._reddit.put(
             path, data={"json": dumps(payload, cls=WidgetEncoder)}
