@@ -2,7 +2,7 @@ import pickle
 
 import pytest
 from praw.exceptions import ClientException
-from praw.models import Submission
+from praw.models import Submission, Redditor, Subreddit
 
 from ... import UnitTest
 
@@ -106,3 +106,35 @@ class TestSubmission(UnitTest):
     def test_shortlink(self):
         submission = Submission(self.reddit, _data={"id": "dummy"})
         assert submission.shortlink == "https://redd.it/dummy"
+
+    def test_objectify(self):
+        data = {"author": "dummy_author", "subreddit": "dummy_subreddit"}
+        Submission._objectify(self.reddit, data=data)
+
+        redditor = data.pop("author")
+        assert type(redditor) is Redditor
+        assert redditor.name == redditor.a.name == "dummy_author"
+
+        subreddit = data.pop("subreddit")
+        assert type(subreddit) is Subreddit
+        assert (
+            subreddit.display_name
+            == subreddit.a.display_name
+            == "dummy_subreddit"
+        )
+
+        assert data == {}
+
+        #
+        data = {"author": "[deleted]"}
+        Submission._objectify(self.reddit, data=data)
+
+        item = data.pop("author")
+        assert item is None
+
+        #
+        data = {"author": "[removed]"}
+        Submission._objectify(self.reddit, data=data)
+
+        item = data.pop("author")
+        assert item is None

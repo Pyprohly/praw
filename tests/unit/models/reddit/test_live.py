@@ -165,3 +165,13 @@ class TestLiveUpdate(UnitTest):
         )
         assert isinstance(update.thread, LiveThread)
         assert update.thread.id == thread_id
+
+    def test_objectify(self):
+        data = {"author": "dummy_author"}
+        LiveUpdate._objectify(self.reddit, data=data)
+
+        redditor = data.pop("author")
+        assert type(redditor) is Redditor
+        assert redditor.name == redditor.a.name == "dummy_author"
+
+        assert data == {}
